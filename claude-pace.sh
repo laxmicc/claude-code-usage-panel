@@ -20,8 +20,11 @@ command -v jq >/dev/null || {
 # C=Cyan G=Green Y=Yellow R=Red D=Dim N=Normal (reset)
 # Store real escape bytes so final output does not need echo -e interpretation.
 C=$'\033[36m' G=$'\033[32m' Y=$'\033[33m' R=$'\033[31m' D=$'\033[2m' N=$'\033[0m' B=$'\033[1m'
-# Claude brand coral (#D97757) as 24-bit truecolor — used for the normal-usage bar.
-CLA=$'\033[38;2;217;119;87m'
+# Opus/Sonnet model colors: the ANSI magenta(35)/blue(34) palette slots render
+# too dark on most dark themes, so pin these two to mid-tone truecolor that's
+# legible on BOTH dark and light. Everything else stays on the theme palette.
+M=$'\033[38;2;194;95;201m' BL=$'\033[38;2;61;138;212m'  # purple-magenta, azure
+YL=$'\033[38;2;188;138;20m'  # amber — "yellow" path highlight legible on light AND dark (palette yellow washes on light)
 # Cache records use ASCII Unit Separator so legal Git ref names cannot split
 # serialized fields and empty values survive round-trips through read.
 SEP=$'\037'
@@ -191,7 +194,7 @@ E=$((PCT * 80 / 100))
 ((PCT > 0 && E == 0)) && E=1
 F=$((E / 8))
 P=$((E % 8))
-if ((PCT >= 90)); then BC=$R; elif ((PCT >= 70)); then BC=$Y; else BC=$CLA; fi
+if ((PCT >= 90)); then BC=$R; elif ((PCT >= 70)); then BC=$Y; else BC=$G; fi
 BAR=""
 for ((i = 0; i < F; i++)); do BAR+='█'; done
 if ((F < 10 && P > 0)); then
@@ -241,15 +244,15 @@ if [[ "${DIR/#$HOME/\~}" =~ /([^/]+)/\.claude/worktrees/([^/]+) ]]; then
 fi
 # Project name shown in full — no truncation, so long folder names aren't cut.
 
-# Format: project (branch) [git stats] — project path shown bold.
-L1R="${B}${PN}${N}"
+# Format: project (branch) [git stats] — project path bold + amber highlight.
+L1R="${B}${YL}${PN}${N}"
 if [ -n "$BR" ]; then
   ((${#BR} > 35)) && BR="${BR:0:35}…"
   L1R+=" (${BR})"
   ((FC > 0)) 2>/dev/null && L1R+=" ${FC}f ${G}+${AD}${N} ${R}-${DL}${N}"
 elif [[ "$IS_WT" == "1" ]]; then
   # Detached HEAD in worktree: show repo/worktree to preserve identity
-  L1R="${B}${_REPO}/${_WT_NAME}${N}"
+  L1R="${B}${YL}${_REPO}/${_WT_NAME}${N}"
 fi
 
 # ── Session wall-clock (cost.total_duration_ms) → appended dim on line 1 ──
@@ -263,7 +266,7 @@ _fmt_dur() {
   else printf '%ds' "$s"; fi
 }
 _DUR=$(_fmt_dur "$DUR")
-[ -n "$_DUR" ] && L1R+=" ${CLA}· ${_DUR}${N}"
+[ -n "$_DUR" ] && L1R+=" ${C}· ${_DUR}${N}"
 
 # Usage data: read stdin rate_limits when available. When absent we show
 # placeholders and the session cost instead of falling back to a possibly stale
@@ -295,14 +298,14 @@ _usage() {
   fi
   [[ "$rm" =~ ^[0-9]+$ ]] || return
   ((rm >= 1440)) && {
-    printf " ${CLA}%dd${N}" $((rm / 1440))
+    printf " ${C}%dd${N}" $((rm / 1440))
     return
   }
   ((rm >= 60)) && {
-    printf " ${CLA}%dh${N}" $((rm / 60))
+    printf " ${C}%dh${N}" $((rm / 60))
     return
   }
-  printf " ${CLA}%dm${N}" "$rm"
+  printf " ${C}%dm${N}" "$rm"
 }
 
 # ── Output Assembly (symmetric single-pipe alignment) ──
@@ -323,11 +326,27 @@ elif ((W2 > W1)); then
   printf -v PAD1 "%*s" $((W2 - W1)) ""
 fi
 
+# ── Per-model color (by family) + per-effort color (heat gradient) ──
+case "$MODEL" in
+  *Opus*) MC=$M ;;        # magenta
+  *Sonnet*) MC=$BL ;;     # blue
+  *Haiku*) MC=$G ;;       # green
+  *Fable*) MC=$Y ;;       # yellow
+  *) MC=$C ;;             # cyan (unknown/other)
+esac
+case "$EF" in
+  low) EC=$G ;;            # green
+  high) EC=$Y ;;           # yellow
+  xhigh) EC=$R ;;          # red
+  max) EC="${R}${B}" ;;    # bold red (hottest)
+  *) EC=$C ;;              # cyan (medium)
+esac
+
 # Line 1: model (context) effort | project (branch) git-stats
-L1="${C}${MODEL} ${EF}${N}${PAD1} ${D}|${N}  ${L1R}"
+L1="${MC}${MODEL}${N} ${EC}${EF}${N}${PAD1} ${D}|${N}  ${L1R}"
 
 # Line 2: bar pct% CL | 5h used% ...  7d used% ...
-L2="${BC}${BAR}${N} ${PCT}% ${TL}${PAD2} ${D}|${N}  5h $(_usage "$U5" "$RM5" 300)  7d $(_usage "$U7" "$RM7" 10080)"
+L2="${BC}${BAR}${N} ${PCT}% ${B}${YL}${TL}${N}${PAD2} ${D}|${N}  5h $(_usage "$U5" "$RM5" 300)  7d $(_usage "$U7" "$RM7" 10080)"
 # Session cost: only when usage data is unavailable in stdin.
 if [[ "$SHOW_COST" == "1" ]]; then
   printf -v _CS "\$%.2f" "$COST" 2>/dev/null
