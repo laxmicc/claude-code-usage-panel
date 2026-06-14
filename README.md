@@ -1,140 +1,133 @@
-# Claude Pace
+# Claude Code Usage Panel
 
-A lightweight Claude Code status line and rate limit tracker that shows your 5-hour and 7-day quota usage in real time. Pure Bash + jq, single file, zero npm.
+A customized Claude Code statusline — a compact two-line panel showing your model,
+reasoning effort, project, context-window usage, token count, session time, and a
+live **5-hour / 7-day rate-limit quota** with pace tracking. Pure Bash + `jq`,
+single file, no Node.js.
 
-If you are searching for a Claude Code statusline, a Claude Code quota monitor, or a Claude Code usage tracker, claude-pace is built for that narrow job. It shows not only how much quota you have used, but whether your current burn rate is sustainable before the window resets.
+> **Customized fork of [Astro-Han/claude-pace](https://github.com/Astro-Han/claude-pace).**
+> See [`LICENSE`](LICENSE) for the original license. This fork adds: per-model and
+> per-effort colors, a used/total **token counter**, a **session wall-clock**, a
+> bold-**amber** highlight for the project path and token count, theme-aware
+> coloring (ANSI palette where it adapts, hand-picked truecolor where the palette
+> is too dim on dark), and a Windows Git-Bash CRLF/alignment fix.
 
-![claude-pace statusline demo](.github/claude-pace-demo.gif)
-
-## TL;DR
-
-- Claude Code status line with `5h` and `7d` quota usage, reset countdowns, and pace delta
-- Pace-aware rate limit tracking, `⇡15%` means overspending, `⇣15%` means headroom
-- Pure Bash + jq, single file, no Node.js runtime and no lockfile churn
-- Install as a Claude Code plugin, with `npx`, or as a single script
-
-Most statuslines show "you used 60%." That number means nothing without context. 60% with 30 minutes left? Fine, the window resets soon. 60% with 4 hours left? You are about to hit the wall. claude-pace compares your burn rate to the time remaining and shows the delta.
-
-- **⇣15%** green = you've used 15% less than expected. Headroom. Keep going.
-- **⇡15%** red = you're burning 15% faster than sustainable. Slow down.
-- **15%** / **20%** = used in the 5h and 7d windows. **3h** = resets in 3 hours.
-- Top line: model, effort, project `(branch)`, `3f +24 -7` = git diff stats
-
-Claude Code supports custom status lines through its `statusLine` setting and `/statusline` workflow in the official docs:
-
-- [Customize your status line](https://code.claude.com/docs/en/statusline)
-- [Claude Code settings](https://docs.anthropic.com/en/docs/claude-code/settings)
-
-## Table of Contents
-
-- [Install This Claude Code Statusline](#install-this-claude-code-statusline)
-- [Upgrade](#upgrade)
-- [Claude Code Statusline Comparison](#claude-code-statusline-comparison)
-- [How Claude Pace Tracks Quota](#how-claude-pace-tracks-quota)
-- [Claude Code Statusline FAQ](#claude-code-statusline-faq)
-
-## Install This Claude Code Statusline
-
-Requires `jq`.
-
-**Plugin (recommended):**
-
-Inside Claude Code:
+## Preview
 
 ```
-/plugin marketplace add Astro-Han/claude-pace
-/plugin install claude-pace
-/reload-plugins
-/claude-pace:setup
+Opus 4.8 (1M)  xhigh  |  D:\…\Trading-Codebase (feat/sqx-bridge) 19f +1543 -1805 · 15h4m
+▓▓░░░░░░░░  4%  35.4k/1M  |  5h 56% ↓22% 1h   7d 37% ↓31% 2d
 ```
 
-**npx:**
+---
+
+## Reading the panel
+
+### Line 1 — Identity & Project
+
+| Element | Meaning |
+|---|---|
+| `Opus 4.8 (1M)` | Active **model** + its **context-window size** (`1M` = 1,000,000 tokens). Color = model family (see legend). |
+| `xhigh` | Reasoning **effort level** (`low` / `medium` / `high` / `xhigh` / `max`). Color = heat gradient. |
+| `\|` | Separator (dim) between the identity (left) and project (right) sections. |
+| `D:\…\Trading-Codebase` | **Project folder** (your working dir), shown in **bold amber** as the focal point. Full path appears on Windows because backslash paths have no `/` to trim. |
+| `(feat/sqx-bridge)` | Current **git branch**. |
+| `19f` | **Files changed** in the working tree (uncommitted, vs `HEAD`). |
+| `+1543` / `-1805` | Lines **added** (green) / **removed** (red) in that uncommitted diff. |
+| `· 15h4m` | **Session wall-clock** — how long this Claude Code session has run (cyan = time info). |
+
+### Line 2 — Budget & Usage
+
+> **Left of the `\|` = this conversation's context. Right of the `\|` = your account's rate limits.** They measure different things — don't conflate them.
+
+| Element | Meaning |
+|---|---|
+| `▓▓░░░░░░░░` | **Context-window fill bar** (10 cells, eighth-block precision). Green < 70%, yellow 70–90%, red 90%+. |
+| `4%` | Percent of the **context window** used by the current chat. |
+| `35.4k/1M` | **Token counter** — input tokens used / window size (bold amber). How close this chat is to filling up / compacting. |
+| `\|` | Separator (dim). |
+| `5h` / `7d` | The two **rate-limit windows** — rolling 5-hour and 7-day account quotas. |
+| `56%` / `37%` | Percent of that quota **already used**. Green = healthy, yellow ≥ 70%, red ≥ 90%. |
+| `↓22%` / `↓31%` | **Pace delta.** **↓ green = under pace** (spending slower than the clock → surplus). **↑ red = over pace** (spending faster than the window elapses → you'll hit the cap before reset). |
+| `1h` / `2d` | **Time until that window resets** (cyan). |
+
+---
+
+## Color legend
+
+| Color | Used for |
+|---|---|
+| **Model name** | Opus = purple-magenta · Sonnet = azure · Haiku = green · Fable = yellow · other = cyan |
+| **Effort** | low = green · medium = cyan · high = yellow · xhigh = red · max = **bold** red |
+| **Health** (bar, quota %) | green < 70% · yellow 70–90% · red 90%+ |
+| **Pace arrow** | green ↓ = under pace (good) · red ↑ = over pace (slow down) |
+| **Bold amber** | project path + token counter (the two "find-it-fast" numbers) |
+| **Cyan** | time info — session clock, reset countdowns |
+| **Dim** | separators |
+
+Colors use the terminal's ANSI palette (which your theme remaps for light/dark)
+wherever it stays readable; a few (model magenta/blue, the amber highlight) are
+fixed mid-tone truecolor because those palette slots wash out or go dim on one of
+the two backgrounds.
+
+---
+
+## How to interpret it
+
+- **The pace arrows are the steering signal.** Green ↓ means your current burn
+  rate is sustainable until the window resets; red ↑ means you'll be throttled
+  before reset unless you slow down. Example: `5h 56% ↓22% 1h` = you've used 56%
+  of the 5-hour quota with ~80% of the window already elapsed, so you're ~22%
+  *under* pace — plenty of headroom for the last hour.
+- **Context (left) and quota (right) are independent.** A near-full *context bar*
+  means *this chat* is getting long (may compact soon); it has nothing to do with
+  your *account* 5h/7d limits.
+- **Amber = the numbers you most often want to find fast** (where you are, how
+  full the chat is). **Green→yellow→red anywhere = health** (good → attention).
+
+---
+
+## Install
+
+Needs **`jq`** and Claude Code **2.1.80+** (for live rate-limit data).
+
+**1. Download the script**
 
 ```bash
-npx claude-pace
-```
-
-Restart Claude Code. Done.
-
-**Manual:**
-
-```bash
-curl -o ~/.claude/statusline.sh \
-  https://raw.githubusercontent.com/Astro-Han/claude-pace/main/claude-pace.sh
+# macOS / Linux
+curl -sSL -o ~/.claude/statusline.sh \
+  https://raw.githubusercontent.com/laxmicc/claude-code-usage-panel/custom/claude-pace.sh
 chmod +x ~/.claude/statusline.sh
+
+# Windows (Git Bash)
+curl -sSL -o "$HOME/.claude/statusline.sh" \
+  https://raw.githubusercontent.com/laxmicc/claude-code-usage-panel/custom/claude-pace.sh
 ```
 
-Add to `~/.claude/settings.json`:
+**2. Install `jq`**
 
-```json
-{
-  "statusLine": {
-    "type": "command",
-    "command": "~/.claude/statusline.sh"
-  }
-}
+```bash
+brew install jq          # macOS
+sudo apt install jq      # Debian/Ubuntu
+winget install jqlang.jq # Windows
 ```
 
-Restart Claude Code. Done.
+**3. Point Claude Code at it** — in `~/.claude/settings.json`:
 
-To remove: delete the `statusLine` block from `~/.claude/settings.json`.
+```jsonc
+// macOS / Linux
+"statusLine": { "type": "command", "command": "~/.claude/statusline.sh" }
 
-## Upgrade
+// Windows
+"statusLine": { "type": "command", "command": "bash C:/Users/<you>/.claude/statusline.sh" }
+```
 
-- **Plugin:** `/claude-pace:setup` (pulls the latest from GitHub)
-- **npx:** `npx claude-pace@latest`
-- **Manual:** Re-run the `curl` command above.
+Restart Claude Code (or wait for the next status refresh).
 
-Release notifications: Watch this repo → Custom → Releases.
+---
 
-## Claude Code Statusline Comparison
+## Credits
 
-|  | claude-pace | [claude-hud](https://github.com/jarrodwatts/claude-hud) | [CCometixLine](https://github.com/Haleclipse/CCometixLine) | [ccstatusline](https://github.com/sirmalloc/ccstatusline) |
-|---|---|---|---|---|
-| Runtime | `jq` | Node.js 18+ / npm | Compiled (Rust) | Node.js / npm |
-| Codebase | Single Bash file | 1000+ lines + node_modules | Compiled binary | 1000+ lines + node_modules |
-| Rate limit tracking | 5h + 7d usage %, pace delta, reset countdown | Usage % | Usage % (planned) | None (formatting only) |
-| Execution | ~10ms | ~90ms | ~5ms | ~90ms |
-| Memory | ~2 MB | ~57 MB | ~3 MB | ~57 MB |
-
-Execution and memory measured on Apple Silicon, 300 runs, same stdin JSON.
-
-Need themes, powerline aesthetics, or TUI config? Try [ccstatusline](https://github.com/sirmalloc/ccstatusline). The entire source of claude-pace is [one file](claude-pace.sh). Read it.
-
-## How Claude Pace Tracks Quota
-
-Claude Code polls the statusline every ~300ms:
-
-| Data | Source | Cache |
-|------|--------|-------|
-| Model, context, cost | stdin JSON (single `jq` call) | None needed |
-| Quota (5h, 7d, pace) | stdin `rate_limits` (live, no fallback) | None |
-| Git branch + diff | `git` commands | Private cache dir, 5s TTL |
-
-Requires Claude Code `2.1.80+`, where `rate_limits` is available in statusline stdin. When stdin omits `rate_limits` (older Claude Code, or providers that do not surface the field), claude-pace shows `--` for 5h/7d quota and the session cost if available. No cached or stale quota is ever shown, because a cached account-level snapshot cannot be proven to belong to the current provider/account.
-
-Git cache files live in a private per-user directory (`$XDG_RUNTIME_DIR/claude-pace` or `~/.cache/claude-pace`, mode 700). All cache reads are validated before use. No files are ever written to shared `/tmp`.
-
-## Claude Code Statusline FAQ
-
-**Does it need Node.js?**
-No. Only `jq` (available via `brew install jq` or your package manager). No npm, no node_modules, no lock files.
-
-**How does pace tracking work?**
-claude-pace compares your current usage percentage to the fraction of time elapsed in each window (5-hour and 7-day). If you've used 40% of your quota but only 30% of the time has passed, the pace delta shows ⇡10% (red, burning too fast). If you've used 30% with 40% of time elapsed, it shows ⇣10% (green, headroom).
-
-**Does it make network calls?**
-No. Quota data comes from stdin `rate_limits` on Claude Code `2.1.80+`. If `rate_limits` is absent (older Claude Code, or providers that omit it), claude-pace shows `--` for 5h/7d and the local session cost when present. No stale quota fallback — see [the removal decision](docs/decisions/2026-05-20-quota-cache-removal.md).
-
-**Can I inspect the source?**
-The entire tool is [one Bash file](claude-pace.sh). Read it before you install it.
-
-## Also by the Author
-
-[**diffpane**](https://github.com/Astro-Han/diffpane) - Real-time TUI diff viewer for AI coding agents. See what Claude Code changes as it happens.
-
-## License
-
-MIT
-
-*Last updated: 2026-05-20 · v0.9.0*
+Built on **[claude-pace](https://github.com/Astro-Han/claude-pace)** by Astro-Han —
+all the rate-limit / pace machinery is theirs. This repo is a personal customized
+fork; see [`LICENSE`](LICENSE).
