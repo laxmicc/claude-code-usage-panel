@@ -19,7 +19,9 @@ command -v jq >/dev/null || {
 # ── Colors & Utilities ──
 # C=Cyan G=Green Y=Yellow R=Red D=Dim N=Normal (reset)
 # Store real escape bytes so final output does not need echo -e interpretation.
-C=$'\033[36m' G=$'\033[32m' Y=$'\033[33m' R=$'\033[31m' D=$'\033[2m' N=$'\033[0m'
+C=$'\033[36m' G=$'\033[32m' Y=$'\033[33m' R=$'\033[31m' D=$'\033[2m' N=$'\033[0m' B=$'\033[1m'
+# Claude brand coral (#D97757) as 24-bit truecolor — used for the normal-usage bar.
+CLA=$'\033[38;2;217;119;87m'
 # Cache records use ASCII Unit Separator so legal Git ref names cannot split
 # serialized fields and empty values survive round-trips through read.
 SEP=$'\037'
@@ -112,7 +114,7 @@ _stale() { [ ! -f "$1" ] || [ $((NOW - $(stat -f%m "$1" 2>/dev/null || stat -c%Y
 HAS_RL=0
 _SETTINGS=$(cat "$HOME/.claude/settings.json" 2>/dev/null)
 echo "$_SETTINGS" | jq -e . >/dev/null 2>&1 || _SETTINGS='{}'
-IFS=$'\t' read -r MODEL DIR PCT CTX COST EFF HAS_RL U5 U7 R5 R7 TIN < <(
+IFS=$'\t' read -r MODEL DIR PCT CTX COST EFF HAS_RL U5 U7 R5 R7 DUR TIN < <(
   jq -r --argjson cfg "$_SETTINGS" \
     '[(.model.display_name//"?"),(.workspace.project_dir//"."),
     (.context_window.used_percentage//0|floor),(.context_window.context_window_size//0),
@@ -123,9 +125,13 @@ IFS=$'\t' read -r MODEL DIR PCT CTX COST EFF HAS_RL U5 U7 R5 R7 TIN < <(
     (.rate_limits.seven_day.used_percentage//null|if type=="number" then floor else "--" end),
     (.rate_limits.five_hour.resets_at//0),
     (.rate_limits.seven_day.resets_at//0),
+    (.cost.total_duration_ms//0|floor),
     (.context_window.total_input_tokens//0|floor)]|@tsv' <<<"$input"
 )
 case "${EFF:-default}" in low) EF='low' ;; high) EF='high' ;; xhigh) EF='xhigh' ;; max) EF='max' ;; *) EF='medium' ;; esac
+# jq.exe on Windows emits CRLF, so `read` leaves a trailing CR on the last TSV
+# field (TIN). Strip it or numeric guards on TIN silently fail.
+TIN=${TIN%$'\r'}
 
 # ── Auto-compact window: track usage against the compaction threshold ──
 # When CLAUDE_CODE_AUTO_COMPACT_WINDOW is set, compaction fires at that token
@@ -149,6 +155,24 @@ elif ((CTX > 0)); then
   CL="$((CTX / 1000))K"
 else CL=""; fi
 
+# ── Token counter: used input tokens, human-readable (e.g. 49.8k) ──
+# Pairs with PCT (both measure the same window after any ACW adjustment) so
+# line 2 reads "used/total" like the desktop app's "49.8k / 200K".
+_fmt_tok() {
+  local t="$1"
+  if ((t >= 1000000)); then
+    printf '%d.%dM' $((t / 1000000)) $(((t % 1000000) / 100000))
+  elif ((t >= 1000)); then
+    printf '%d.%dk' $((t / 1000)) $(((t % 1000) / 100))
+  else
+    printf '%d' "$t"
+  fi
+}
+TL="$CL"
+if [[ "$TIN" =~ ^[0-9]+$ ]] && ((TIN > 0)); then
+  if [ -n "$CL" ]; then TL="$(_fmt_tok "$TIN")/${CL}"; else TL="$(_fmt_tok "$TIN")"; fi
+fi
+
 # ── MODEL_SHORT: strip redundant context label ──
 MODEL=${MODEL/ context)/)}
 [[ "$CTX" -gt 0 && "$MODEL" != *"("* ]] && MODEL="${MODEL} (${CL})"
@@ -157,13 +181,26 @@ MODEL=${MODEL/ context)/)}
 _ML="${MODEL} ${EF}"
 ((${#_ML} > 28)) && MODEL="${MODEL:0:$((28 - 2 - ${#EF}))}…"
 
-# ── Progress Bar ──
-F=$((PCT / 10))
-((F < 0)) && F=0
-((F > 10)) && F=10
-if ((PCT >= 90)); then BC=$R; elif ((PCT >= 70)); then BC=$Y; else BC=$G; fi
+# ── Progress Bar (eighth-block resolution: fills partially even below 10%) ──
+# 10 cells × 8 sub-levels = 80 steps, so 1–9% shows a sliver instead of an
+# empty bar. E=eighths filled, F=whole cells, P=partial level of the next cell.
+E=$((PCT * 80 / 100))
+((E < 0)) && E=0
+((E > 80)) && E=80
+# Any non-zero usage shows at least a 1/8 sliver rather than an empty bar.
+((PCT > 0 && E == 0)) && E=1
+F=$((E / 8))
+P=$((E % 8))
+if ((PCT >= 90)); then BC=$R; elif ((PCT >= 70)); then BC=$Y; else BC=$CLA; fi
 BAR=""
 for ((i = 0; i < F; i++)); do BAR+='█'; done
+if ((F < 10 && P > 0)); then
+  case $P in
+  1) BAR+='▏' ;; 2) BAR+='▎' ;; 3) BAR+='▍' ;; 4) BAR+='▌' ;;
+  5) BAR+='▋' ;; 6) BAR+='▊' ;; 7) BAR+='▉' ;;
+  esac
+  F=$((F + 1))
+fi
 for ((i = F; i < 10; i++)); do BAR+='░'; done
 
 # ── Git Info (5s cache, atomic write) ──
@@ -202,19 +239,31 @@ if [[ "${DIR/#$HOME/\~}" =~ /([^/]+)/\.claude/worktrees/([^/]+) ]]; then
   _WT_NAME="${BASH_REMATCH[2]}"
   PN="$_REPO"
 fi
-((${#PN} > 25)) && PN="${PN:0:25}…"
+# Project name shown in full — no truncation, so long folder names aren't cut.
 
-# Format: project (branch) [git stats]
-L1R="$PN"
+# Format: project (branch) [git stats] — project path shown bold.
+L1R="${B}${PN}${N}"
 if [ -n "$BR" ]; then
   ((${#BR} > 35)) && BR="${BR:0:35}…"
   L1R+=" (${BR})"
   ((FC > 0)) 2>/dev/null && L1R+=" ${FC}f ${G}+${AD}${N} ${R}-${DL}${N}"
 elif [[ "$IS_WT" == "1" ]]; then
   # Detached HEAD in worktree: show repo/worktree to preserve identity
-  L1R="${_REPO}/${_WT_NAME}"
-  ((${#L1R} > 25)) && L1R="${L1R:0:25}…"
+  L1R="${B}${_REPO}/${_WT_NAME}${N}"
 fi
+
+# ── Session wall-clock (cost.total_duration_ms) → appended dim on line 1 ──
+_fmt_dur() {
+  local ms="$1" s
+  [[ "$ms" =~ ^[0-9]+$ ]] || return
+  s=$((ms / 1000))
+  ((s < 1)) && return
+  if ((s >= 3600)); then printf '%dh%dm' $((s / 3600)) $(((s % 3600) / 60))
+  elif ((s >= 60)); then printf '%dm' $((s / 60))
+  else printf '%ds' "$s"; fi
+}
+_DUR=$(_fmt_dur "$DUR")
+[ -n "$_DUR" ] && L1R+=" ${CLA}· ${_DUR}${N}"
 
 # Usage data: read stdin rate_limits when available. When absent we show
 # placeholders and the session cost instead of falling back to a possibly stale
@@ -246,23 +295,27 @@ _usage() {
   fi
   [[ "$rm" =~ ^[0-9]+$ ]] || return
   ((rm >= 1440)) && {
-    printf " ${D}%dd${N}" $((rm / 1440))
+    printf " ${CLA}%dd${N}" $((rm / 1440))
     return
   }
   ((rm >= 60)) && {
-    printf " ${D}%dh${N}" $((rm / 60))
+    printf " ${CLA}%dh${N}" $((rm / 60))
     return
   }
-  printf " ${D}%dm${N}" "$rm"
+  printf " ${CLA}%dm${N}" "$rm"
 }
 
 # ── Output Assembly (symmetric single-pipe alignment) ──
 
 # Build plain-text left sections for width measurement (no ANSI codes).
+# The bar is multibyte; ${#..} counts bytes in this C-locale shell and would
+# inflate line-2 width by ~20, padding line 1 until its right edge (duration)
+# clips. The bar is always 10 visible cells, so derive W2 from cells + the
+# ASCII PCT/TL parts: "BAR PCT% TL" = 10 + 1 + len(PCT) + 1 + 1 + len(TL).
 L1_PLAIN="${MODEL} ${EF}"
-L2_PLAIN="${BAR} ${PCT}% ${CL}"
 # Pad shorter side so | aligns on both lines.
-W1=${#L1_PLAIN} W2=${#L2_PLAIN}
+W1=${#L1_PLAIN}
+W2=$((13 + ${#PCT} + ${#TL}))
 PAD1="" PAD2=""
 if ((W1 > W2)); then
   printf -v PAD2 "%*s" $((W1 - W2)) ""
@@ -274,7 +327,7 @@ fi
 L1="${C}${MODEL} ${EF}${N}${PAD1} ${D}|${N}  ${L1R}"
 
 # Line 2: bar pct% CL | 5h used% ...  7d used% ...
-L2="${BC}${BAR}${N} ${PCT}% ${CL}${PAD2} ${D}|${N}  5h $(_usage "$U5" "$RM5" 300)  7d $(_usage "$U7" "$RM7" 10080)"
+L2="${BC}${BAR}${N} ${PCT}% ${TL}${PAD2} ${D}|${N}  5h $(_usage "$U5" "$RM5" 300)  7d $(_usage "$U7" "$RM7" 10080)"
 # Session cost: only when usage data is unavailable in stdin.
 if [[ "$SHOW_COST" == "1" ]]; then
   printf -v _CS "\$%.2f" "$COST" 2>/dev/null
