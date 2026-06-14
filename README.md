@@ -96,12 +96,12 @@ Needs **`jq`** and Claude Code **2.1.80+** (for live rate-limit data).
 ```bash
 # macOS / Linux
 curl -sSL -o ~/.claude/statusline.sh \
-  https://raw.githubusercontent.com/laxmicc/claude-code-usage-panel/custom/claude-pace.sh
+  https://raw.githubusercontent.com/laxmicc/claude-code-usage-panel/main/usage-panel.sh
 chmod +x ~/.claude/statusline.sh
 
 # Windows (Git Bash)
 curl -sSL -o "$HOME/.claude/statusline.sh" \
-  https://raw.githubusercontent.com/laxmicc/claude-code-usage-panel/custom/claude-pace.sh
+  https://raw.githubusercontent.com/laxmicc/claude-code-usage-panel/main/usage-panel.sh
 ```
 
 **2. Install `jq`**
